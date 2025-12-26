@@ -18,7 +18,6 @@ export const PuzzleBoard = ({
   const [pieces, setPieces] = useState<JigsawPiece[]>([]);
   const [config, setConfig] = useState<PuzzleConfig | null>(null);
   
-  // We track the dragging state here
   const [dragging, setDragging] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [loading, setLoading] = useState(true);
@@ -146,9 +145,8 @@ export const PuzzleBoard = ({
   }, [imageSrc, gridSize]);
 
 
-  // --- 3. ROBUST GLOBAL DRAG HANDLER ---
+  // --- 3. DRAG HANDLER (Global for Mobile) ---
   
-  // Start Drag (Attached to the Piece)
   const handlePointerDown = (e: React.PointerEvent, id: number) => {
     e.preventDefault();
     e.stopPropagation();
@@ -158,12 +156,10 @@ export const PuzzleBoard = ({
     const piece = pieces.find(p => p.id === id);
     if (!piece || piece.isPlaced) return;
 
-    // We calculate offset relative to the piece's top-left corner
     const rect = containerRef.current.getBoundingClientRect();
     const scrollLeft = containerRef.current.scrollLeft;
     const scrollTop = containerRef.current.scrollTop;
     
-    // Mouse position in "Board Space"
     const mouseX = (e.clientX - rect.left) + scrollLeft;
     const mouseY = (e.clientY - rect.top) + scrollTop;
 
@@ -173,13 +169,9 @@ export const PuzzleBoard = ({
     });
     setDragging(id);
     
-    // Bring to front
     setPieces(prev => [...prev.filter(p => p.id !== id), piece]);
   };
 
-  // Global Move/Up Listeners
-  // This useEffect activates ONLY when dragging starts. 
-  // It attaches listeners to the WINDOW so you can't "lose" the piece.
   useEffect(() => {
     if (dragging === null) return;
 
@@ -220,6 +212,7 @@ export const PuzzleBoard = ({
           
           const dist = Math.hypot(p.currentX - targetX, p.currentY - targetY);
 
+          // MAGNETIC SNAPPING LOGIC IS HERE
           if (dist < SNAP_DIST) {
             didSnap = true;
             snapPos = { x: targetX, y: targetY };
@@ -247,12 +240,10 @@ export const PuzzleBoard = ({
       setDragging(null);
     };
 
-    // Add listeners to WINDOW
     window.addEventListener('pointermove', handleGlobalMove, { passive: false });
     window.addEventListener('pointerup', handleGlobalUp);
     window.addEventListener('pointercancel', handleGlobalUp);
 
-    // Cleanup when drag ends
     return () => {
       window.removeEventListener('pointermove', handleGlobalMove);
       window.removeEventListener('pointerup', handleGlobalUp);
@@ -287,33 +278,57 @@ export const PuzzleBoard = ({
             minHeight: '100%',
             width: containerW,
             height: containerH,
-            touchAction: 'none' // IMPORTANT: Disables browser scrolling in the game area
+            touchAction: 'none'
           }}
         >
           
-          {/* 1. GHOST BOARD */}
+          {/* 
+             1. GHOST BOARD (UPDATED)
+             - Includes Faint Watermark Image.
+             - Includes Magnetic Grid Lines, but styles them 
+               faintly (Thin & Low Opacity) on high levels so it's not "messy".
+          */}
           <div 
-            className="absolute border-2 border-stone-300 bg-white/50 rounded"
+            className="absolute border-2 border-stone-200 rounded overflow-hidden"
             style={{ 
               top: BOARD_MARGIN, 
               left: BOARD_MARGIN, 
               width: config.boardWidth, 
-              height: config.boardHeight 
+              height: config.boardHeight,
+              background: '#f5f5f4'
             }}
           >
-             <svg width={config.boardWidth} height={config.boardHeight} className="overflow-visible opacity-25 pointer-events-none">
+             {/* Watermark Image */}
+             <img 
+               src={imageSrc} 
+               alt="" 
+               className="w-full h-full object-cover pointer-events-none"
+               style={{ opacity: 0.25 }} 
+             />
+
+             {/* Grid Lines */}
+             <svg width={config.boardWidth} height={config.boardHeight} className="absolute inset-0 overflow-visible pointer-events-none">
                {pieces.map(p => (
                  <path 
                    key={`ghost-${p.id}`}
                    d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)}
                    transform={`translate(${p.correctCol * config.pieceWidth - TAB}, ${p.correctRow * config.pieceHeight - TAB})`}
-                   fill="none" stroke="#000" strokeWidth="1.5"
+                   fill="none" 
+                   // ADAPTIVE STYLING:
+                   // If Easy (<=4): Standard Black Lines (visible)
+                   // If Expert (>4): Very Thin, Faint Lines (clean but visible)
+                   stroke="#000" 
+                   strokeWidth={gridSize > 4 ? "0.5" : "1.5"} 
+                   style={{ opacity: gridSize > 4 ? 0.1 : 0.25 }} 
                  />
                ))}
              </svg>
-             <div className="absolute inset-0 flex items-center justify-center text-stone-300 font-bold text-3xl uppercase opacity-50 tracking-widest">
-               Drop Zone
-             </div>
+             
+             {!pieces.some(p => p.isPlaced) && (
+                <div className="absolute inset-0 flex items-center justify-center text-stone-400 font-bold text-2xl uppercase opacity-50 tracking-widest pointer-events-none">
+                  Place Here
+                </div>
+             )}
           </div>
 
           {/* 2. PIECES */}
@@ -329,7 +344,6 @@ export const PuzzleBoard = ({
                 transform: `translate(${p.currentX}px, ${p.currentY}px) rotate(${p.rotation}deg)`,
                 zIndex: p.isPlaced ? 1 : (dragging === p.id ? 100 : 10),
                 cursor: p.isPlaced ? 'default' : 'grab',
-                // Important: Only the placed pieces ignore events. The draggable ones must listen.
                 pointerEvents: p.isPlaced ? 'none' : 'auto', 
                 transition: dragging === p.id ? 'none' : 'transform 0.1s ease-out',
                 filter: p.isPlaced ? 'none' : 'drop-shadow(2px 3px 5px rgba(0,0,0,0.3))',
