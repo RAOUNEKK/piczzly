@@ -3,9 +3,9 @@ import { JigsawPiece, PuzzleConfig, PuzzleBoardProps } from '../types/puzzle';
 import confetti from 'canvas-confetti';
 
 // --- CONSTANTS ---
-const TAB = 24;            // Size of the connector tab
-const SNAP_DIST = 40;      // Distance to snap
-const BOARD_MARGIN = 20;   // Physical spacing around the board
+const TAB = 24;            
+const SNAP_DIST = 40;      
+const BOARD_MARGIN = 20;   
 
 export const PuzzleBoard = ({ 
   imageSrc, 
@@ -17,11 +17,13 @@ export const PuzzleBoard = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [pieces, setPieces] = useState<JigsawPiece[]>([]);
   const [config, setConfig] = useState<PuzzleConfig | null>(null);
+  
+  // We track the dragging state here
   const [dragging, setDragging] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [loading, setLoading] = useState(true);
 
-  // --- 1. SYMMETRICAL PATH GENERATOR ---
+  // --- 1. SHAPE GENERATOR ---
   const getPiecePath = (width: number, height: number, shape: number[]) => {
     const [top, right, bottom, left] = shape;
     const neck = TAB * 0.22;
@@ -74,13 +76,11 @@ export const PuzzleBoard = ({
       const isMobile = window.innerWidth < 800;
       const trayWidth = isMobile ? 0 : 300; 
       
-      // Calculate available space minus margins
       const availableW = window.innerWidth - trayWidth - (BOARD_MARGIN * 3);
       const availableH = isMobile ? window.innerHeight * 0.5 : window.innerHeight - (BOARD_MARGIN * 3);
 
       const scale = Math.min(1, availableW / img.width, availableH / img.height);
       
-      // Floor dimensions to avoid sub-pixel rendering gaps
       const boardW = Math.floor(img.width * scale);
       const boardH = Math.floor(img.height * scale);
       const pieceW = Math.floor(boardW / gridSize);
@@ -89,7 +89,6 @@ export const PuzzleBoard = ({
       const exactW = pieceW * gridSize;
       const exactH = pieceH * gridSize;
 
-      // Shapes Grid
       const shapes: number[][][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(0));
       for (let r = 0; r < gridSize; r++) {
         for (let c = 0; c < gridSize; c++) {
@@ -146,26 +145,25 @@ export const PuzzleBoard = ({
     };
   }, [imageSrc, gridSize]);
 
-  // --- 3. FIXED DRAG LOGIC (POINTER EVENTS) ---
+
+  // --- 3. ROBUST GLOBAL DRAG HANDLER ---
+  
+  // Start Drag (Attached to the Piece)
   const handlePointerDown = (e: React.PointerEvent, id: number) => {
-    // e.button === 0 is Left Click or Touch Contact
-    if (e.button !== 0) return;
-    
-    // Prevent default browser behaviors (like text selection or scrolling initiation)
-    e.preventDefault(); 
+    e.preventDefault();
     e.stopPropagation();
 
+    if (e.button !== 0 || !containerRef.current) return;
+    
     const piece = pieces.find(p => p.id === id);
-    if (!piece || piece.isPlaced || !containerRef.current) return;
+    if (!piece || piece.isPlaced) return;
 
-    // Optional: Capture pointer to ensure we don't lose the drag if moving fast
-    (e.target as Element).setPointerCapture(e.pointerId);
-
+    // We calculate offset relative to the piece's top-left corner
     const rect = containerRef.current.getBoundingClientRect();
     const scrollLeft = containerRef.current.scrollLeft;
     const scrollTop = containerRef.current.scrollTop;
-
-    // Calculate Position RELATIVE TO CONTENT
+    
+    // Mouse position in "Board Space"
     const mouseX = (e.clientX - rect.left) + scrollLeft;
     const mouseY = (e.clientY - rect.top) + scrollTop;
 
@@ -174,90 +172,102 @@ export const PuzzleBoard = ({
       y: mouseY - piece.currentY
     });
     setDragging(id);
+    
+    // Bring to front
     setPieces(prev => [...prev.filter(p => p.id !== id), piece]);
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (dragging === null || !containerRef.current) return;
-    e.preventDefault(); 
-    
-    const rect = containerRef.current.getBoundingClientRect();
-    const scrollLeft = containerRef.current.scrollLeft;
-    const scrollTop = containerRef.current.scrollTop;
+  // Global Move/Up Listeners
+  // This useEffect activates ONLY when dragging starts. 
+  // It attaches listeners to the WINDOW so you can't "lose" the piece.
+  useEffect(() => {
+    if (dragging === null) return;
 
-    // Apply scroll correction here too
-    const mouseX = (e.clientX - rect.left) + scrollLeft;
-    const mouseY = (e.clientY - rect.top) + scrollTop;
-    
-    setPieces(prev => prev.map(p => 
-      p.id === dragging ? {
-        ...p,
-        currentX: mouseX - dragOffset.x,
-        currentY: mouseY - dragOffset.y,
-        rotation: 0
-      } : p
-    ));
-  };
+    const handleGlobalMove = (e: PointerEvent) => {
+      e.preventDefault();
+      if (!containerRef.current) return;
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (dragging === null || !config || !containerRef.current) return;
-    e.preventDefault();
-    
-    // Release capture if we set it
-    try {
-      (e.target as Element).releasePointerCapture(e.pointerId);
-    } catch (err) {
-      // Ignore errors if element was removed
-    }
-
-    let didSnap = false;
-    let snapPos = { x: 0, y: 0 };
-
-    setPieces(prev => {
-      const next = prev.map(p => {
-        if (p.id !== dragging) return p;
-        
-        // Target calculation must include the BOARD_MARGIN
-        const targetX = BOARD_MARGIN + (p.correctCol * config.pieceWidth) - TAB;
-        const targetY = BOARD_MARGIN + (p.correctRow * config.pieceHeight) - TAB;
-        
-        const dist = Math.hypot(p.currentX - targetX, p.currentY - targetY);
-
-        if (dist < SNAP_DIST) {
-          didSnap = true;
-          snapPos = { x: targetX, y: targetY };
-          return { ...p, currentX: targetX, currentY: targetY, isPlaced: true, rotation: 0 };
-        }
-        return p;
-      });
-      if (next.every(p => p.isPlaced) && onComplete) setTimeout(onComplete, 1000);
-      return next;
-    });
-
-    if (didSnap) {
       const rect = containerRef.current.getBoundingClientRect();
       const scrollLeft = containerRef.current.scrollLeft;
       const scrollTop = containerRef.current.scrollTop;
+
+      const mouseX = (e.clientX - rect.left) + scrollLeft;
+      const mouseY = (e.clientY - rect.top) + scrollTop;
+
+      setPieces(prev => prev.map(p => 
+        p.id === dragging ? {
+          ...p,
+          currentX: mouseX - dragOffset.x,
+          currentY: mouseY - dragOffset.y,
+          rotation: 0
+        } : p
+      ));
+    };
+
+    const handleGlobalUp = (e: PointerEvent) => {
+      e.preventDefault();
+      if (!config) return;
       
-      confetti({
-        particleCount: 30, spread: 50,
-        origin: {
-          x: (rect.left + (snapPos.x - scrollLeft) + config.pieceWidth/2) / window.innerWidth,
-          y: (rect.top + (snapPos.y - scrollTop) + config.pieceHeight/2) / window.innerHeight
-        }
+      let didSnap = false;
+      let snapPos = { x: 0, y: 0 };
+
+      setPieces(prev => {
+        const next = prev.map(p => {
+          if (p.id !== dragging) return p;
+          
+          const targetX = BOARD_MARGIN + (p.correctCol * config.pieceWidth) - TAB;
+          const targetY = BOARD_MARGIN + (p.correctRow * config.pieceHeight) - TAB;
+          
+          const dist = Math.hypot(p.currentX - targetX, p.currentY - targetY);
+
+          if (dist < SNAP_DIST) {
+            didSnap = true;
+            snapPos = { x: targetX, y: targetY };
+            return { ...p, currentX: targetX, currentY: targetY, isPlaced: true, rotation: 0 };
+          }
+          return p;
+        });
+        if (next.every(p => p.isPlaced) && onComplete) setTimeout(onComplete, 1000);
+        return next;
       });
-    }
-    setDragging(null);
-  };
+
+      if (didSnap && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const scrollLeft = containerRef.current.scrollLeft;
+        const scrollTop = containerRef.current.scrollTop;
+        
+        confetti({
+          particleCount: 30, spread: 50,
+          origin: {
+            x: (rect.left + (snapPos.x - scrollLeft) + config.pieceWidth/2) / window.innerWidth,
+            y: (rect.top + (snapPos.y - scrollTop) + config.pieceHeight/2) / window.innerHeight
+          }
+        });
+      }
+      setDragging(null);
+    };
+
+    // Add listeners to WINDOW
+    window.addEventListener('pointermove', handleGlobalMove, { passive: false });
+    window.addEventListener('pointerup', handleGlobalUp);
+    window.addEventListener('pointercancel', handleGlobalUp);
+
+    // Cleanup when drag ends
+    return () => {
+      window.removeEventListener('pointermove', handleGlobalMove);
+      window.removeEventListener('pointerup', handleGlobalUp);
+      window.removeEventListener('pointercancel', handleGlobalUp);
+    };
+  }, [dragging, dragOffset, config, onComplete]);
+
 
   if (loading || !config) return <div className="p-20 text-center font-bold text-gray-400">Loading Jigsaw...</div>;
 
-  // Ensure container is big enough to scroll
   const containerW = Math.max(window.innerWidth, config.boardWidth + 400);
   const containerH = Math.max(window.innerHeight, config.boardHeight + 500);
 
   return (
-    <div className="flex flex-col h-screen bg-stone-100 font-sans select-none overflow-hidden">
+    <div className="flex flex-col h-screen bg-stone-100 font-sans select-none overflow-hidden touch-none">
       
       {/* HEADER */}
       <div className="flex-none flex justify-between items-center px-6 py-3 bg-white shadow z-20">
@@ -276,12 +286,9 @@ export const PuzzleBoard = ({
             minWidth: '100%', 
             minHeight: '100%',
             width: containerW,
-            height: containerH
+            height: containerH,
+            touchAction: 'none' // IMPORTANT: Disables browser scrolling in the game area
           }}
-          // SWITCHED TO POINTER EVENTS
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}
         >
           
           {/* 1. GHOST BOARD */}
@@ -313,7 +320,6 @@ export const PuzzleBoard = ({
           {pieces.map(p => (
             <div
               key={p.id}
-              // SWITCHED TO POINTER DOWN
               onPointerDown={(e) => handlePointerDown(e, p.id)}
               className="absolute"
               style={{
@@ -323,14 +329,14 @@ export const PuzzleBoard = ({
                 transform: `translate(${p.currentX}px, ${p.currentY}px) rotate(${p.rotation}deg)`,
                 zIndex: p.isPlaced ? 1 : (dragging === p.id ? 100 : 10),
                 cursor: p.isPlaced ? 'default' : 'grab',
-                pointerEvents: p.isPlaced ? 'none' : 'auto',
+                // Important: Only the placed pieces ignore events. The draggable ones must listen.
+                pointerEvents: p.isPlaced ? 'none' : 'auto', 
                 transition: dragging === p.id ? 'none' : 'transform 0.1s ease-out',
                 filter: p.isPlaced ? 'none' : 'drop-shadow(2px 3px 5px rgba(0,0,0,0.3))',
-                // CRITICAL FOR MOBILE: Prevents scrolling when touching the piece
                 touchAction: 'none'
               }}
             >
-              <svg width={config.totalPieceWidth} height={config.totalPieceHeight} className="overflow-visible">
+              <svg width={config.totalPieceWidth} height={config.totalPieceHeight} className="overflow-visible" style={{ pointerEvents: 'none' }}>
                 <defs>
                   <clipPath id={`clip-${p.id}`}>
                     <path d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)} />
