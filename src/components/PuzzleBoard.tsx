@@ -19,7 +19,7 @@ export const PuzzleBoard = ({
   // Game State
   const [pieces, setPieces] = useState<JigsawPiece[]>([]);
   const [config, setConfig] = useState<PuzzleConfig | null>(null);
-  const [imgSize, setImgSize] = useState<{w: number, h: number} | null>(null); // New: Store original image size
+  const [imgSize, setImgSize] = useState<{w: number, h: number} | null>(null);
   
   // Interaction State
   const [dragging, setDragging] = useState<number | null>(null);
@@ -76,7 +76,6 @@ export const PuzzleBoard = ({
     img.crossOrigin = "Anonymous";
 
     img.onload = () => {
-      // Store original dimensions for resizing later
       setImgSize({ w: img.width, h: img.height });
 
       const isMobile = window.innerWidth < 800;
@@ -95,7 +94,7 @@ export const PuzzleBoard = ({
       const exactW = pieceW * gridSize;
       const exactH = pieceH * gridSize;
 
-      // Generate Random Shapes
+      // Shapes
       const shapes: number[][][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(0));
       for (let r = 0; r < gridSize; r++) {
         for (let c = 0; c < gridSize; c++) {
@@ -153,7 +152,7 @@ export const PuzzleBoard = ({
   }, [imageSrc, gridSize]);
 
 
-  // --- 3. AUTO-RESIZE HANDLER (ROTATION SUPPORT) ---
+  // --- 3. INTELLIGENT RESIZE HANDLER ---
   useEffect(() => {
     const handleResize = () => {
       if (!config || !imgSize) return;
@@ -161,17 +160,14 @@ export const PuzzleBoard = ({
       const isMobile = window.innerWidth < 800;
       const trayWidth = isMobile ? 0 : 300; 
       
-      // Re-calculate available space
+      // 1. Recalculate Board Dimensions
       const availableW = window.innerWidth - trayWidth - (BOARD_MARGIN * 3);
       const availableH = isMobile ? window.innerHeight * 0.5 : window.innerHeight - (BOARD_MARGIN * 3);
 
       const scale = Math.min(1, availableW / imgSize.w, availableH / imgSize.h);
       
-      // Calculate NEW dimensions
       const boardW = Math.floor(imgSize.w * scale);
-      
-      // Optimization: Only update if size changed significantly (>10px) to avoid jitter
-      if (Math.abs(boardW - config.boardWidth) < 10) return;
+      if (Math.abs(boardW - config.boardWidth) < 10) return; // Ignore tiny shifts
 
       const pieceW = Math.floor(boardW / gridSize);
       const pieceH = Math.floor((imgSize.h * scale) / gridSize);
@@ -181,30 +177,49 @@ export const PuzzleBoard = ({
       const fw = pieceW + TAB * 2;
       const fh = pieceH + TAB * 2;
 
-      // Calculate the Scaling Ratio (New Size / Old Size)
       const ratio = pieceW / config.pieceWidth;
 
-      // Update Config
+      // 2. Update Pieces INTELLIGENTLY
+      setPieces(prev => prev.map(p => {
+        if (p.isPlaced) {
+           // FIXED: If placed, ignore old position/ratio.
+           // Recalculate exact geometric position on the new grid.
+           return {
+             ...p,
+             currentX: BOARD_MARGIN + (p.correctCol * pieceW) - TAB,
+             currentY: BOARD_MARGIN + (p.correctRow * pieceH) - TAB
+           };
+        } else {
+           // FIXED: If loose, scale roughly but CLAMP to screen.
+           // This prevents pieces from flying off when rotating Portrait -> Landscape
+           let nx = p.currentX * ratio;
+           let ny = p.currentY * ratio;
+           
+           // Ensure it stays visible in the new window size
+           const maxX = window.innerWidth - fw;
+           const maxY = window.innerHeight - fh;
+           
+           return {
+             ...p,
+             currentX: Math.min(Math.max(0, nx), maxX),
+             currentY: Math.min(Math.max(0, ny), maxY)
+           };
+        }
+      }));
+
+      // 3. Update Config
       setConfig({ 
         rows: gridSize, cols: gridSize, 
         pieceWidth: pieceW, pieceHeight: pieceH, 
         boardWidth: exactW, boardHeight: exactH,
         totalPieceWidth: fw, totalPieceHeight: fh
       });
-
-      // Update Piece Positions (Scale them so they stay in relative place)
-      setPieces(prev => prev.map(p => ({
-        ...p,
-        currentX: p.currentX * ratio,
-        currentY: p.currentY * ratio
-      })));
     };
 
-    // Debounce the resize event (wait 200ms after rotation finishes)
     let timeoutId: NodeJS.Timeout;
     const onResize = () => {
       clearTimeout(timeoutId);
-      timeoutId = setTimeout(handleResize, 200);
+      timeoutId = setTimeout(handleResize, 100);
     };
 
     window.addEventListener('resize', onResize);
@@ -347,7 +362,7 @@ export const PuzzleBoard = ({
           }}
         >
           
-          {/* 1. GHOST BOARD (Adaptive) */}
+          {/* 1. GHOST BOARD */}
           <div 
             className="absolute border-2 border-stone-200 rounded overflow-hidden"
             style={{ 
@@ -365,7 +380,6 @@ export const PuzzleBoard = ({
                style={{ opacity: 0.25 }} 
              />
 
-             {/* Faint Grid Lines */}
              <svg width={config.boardWidth} height={config.boardHeight} className="absolute inset-0 overflow-visible pointer-events-none">
                {pieces.map(p => (
                  <path 
