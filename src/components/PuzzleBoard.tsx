@@ -146,17 +146,26 @@ export const PuzzleBoard = ({
     };
   }, [imageSrc, gridSize]);
 
-  // --- 3. FIXED DRAG LOGIC (SCROLL AWARE) ---
-  const handleMouseDown = (e: React.MouseEvent, id: number) => {
+  // --- 3. FIXED DRAG LOGIC (POINTER EVENTS) ---
+  const handlePointerDown = (e: React.PointerEvent, id: number) => {
+    // e.button === 0 is Left Click or Touch Contact
     if (e.button !== 0) return;
+    
+    // Prevent default browser behaviors (like text selection or scrolling initiation)
+    e.preventDefault(); 
+    e.stopPropagation();
+
     const piece = pieces.find(p => p.id === id);
     if (!piece || piece.isPlaced || !containerRef.current) return;
+
+    // Optional: Capture pointer to ensure we don't lose the drag if moving fast
+    (e.target as Element).setPointerCapture(e.pointerId);
 
     const rect = containerRef.current.getBoundingClientRect();
     const scrollLeft = containerRef.current.scrollLeft;
     const scrollTop = containerRef.current.scrollTop;
 
-    // Calculate Mouse Position RELATIVE TO CONTENT (not just viewport)
+    // Calculate Position RELATIVE TO CONTENT
     const mouseX = (e.clientX - rect.left) + scrollLeft;
     const mouseY = (e.clientY - rect.top) + scrollTop;
 
@@ -168,8 +177,9 @@ export const PuzzleBoard = ({
     setPieces(prev => [...prev.filter(p => p.id !== id), piece]);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent) => {
     if (dragging === null || !containerRef.current) return;
+    e.preventDefault(); 
     
     const rect = containerRef.current.getBoundingClientRect();
     const scrollLeft = containerRef.current.scrollLeft;
@@ -189,9 +199,17 @@ export const PuzzleBoard = ({
     ));
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent) => {
     if (dragging === null || !config || !containerRef.current) return;
+    e.preventDefault();
     
+    // Release capture if we set it
+    try {
+      (e.target as Element).releasePointerCapture(e.pointerId);
+    } catch (err) {
+      // Ignore errors if element was removed
+    }
+
     let didSnap = false;
     let snapPos = { x: 0, y: 0 };
 
@@ -218,7 +236,6 @@ export const PuzzleBoard = ({
 
     if (didSnap) {
       const rect = containerRef.current.getBoundingClientRect();
-      // Confetti needs viewport coordinates, so we subtract scroll
       const scrollLeft = containerRef.current.scrollLeft;
       const scrollTop = containerRef.current.scrollTop;
       
@@ -261,13 +278,13 @@ export const PuzzleBoard = ({
             width: containerW,
             height: containerH
           }}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          // SWITCHED TO POINTER EVENTS
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
         >
           
           {/* 1. GHOST BOARD */}
-          {/* We position this at exactly BOARD_MARGIN */}
           <div 
             className="absolute border-2 border-stone-300 bg-white/50 rounded"
             style={{ 
@@ -296,19 +313,21 @@ export const PuzzleBoard = ({
           {pieces.map(p => (
             <div
               key={p.id}
-              onMouseDown={(e) => handleMouseDown(e, p.id)}
+              // SWITCHED TO POINTER DOWN
+              onPointerDown={(e) => handlePointerDown(e, p.id)}
               className="absolute"
               style={{
                 left: 0, top: 0,
                 width: config.totalPieceWidth,
                 height: config.totalPieceHeight,
-                // The main transform to position the piece
                 transform: `translate(${p.currentX}px, ${p.currentY}px) rotate(${p.rotation}deg)`,
                 zIndex: p.isPlaced ? 1 : (dragging === p.id ? 100 : 10),
                 cursor: p.isPlaced ? 'default' : 'grab',
                 pointerEvents: p.isPlaced ? 'none' : 'auto',
                 transition: dragging === p.id ? 'none' : 'transform 0.1s ease-out',
-                filter: p.isPlaced ? 'none' : 'drop-shadow(2px 3px 5px rgba(0,0,0,0.3))'
+                filter: p.isPlaced ? 'none' : 'drop-shadow(2px 3px 5px rgba(0,0,0,0.3))',
+                // CRITICAL FOR MOBILE: Prevents scrolling when touching the piece
+                touchAction: 'none'
               }}
             >
               <svg width={config.totalPieceWidth} height={config.totalPieceHeight} className="overflow-visible">
@@ -327,10 +346,6 @@ export const PuzzleBoard = ({
                 </defs>
 
                 <g clipPath={`url(#clip-${p.id})`}>
-                   {/* 
-                      Image offset: We negate the column position and ADD the TAB padding.
-                      This aligns the image slice perfectly with the path center.
-                   */}
                    <image 
                      href={imageSrc} 
                      width={config.boardWidth} 
