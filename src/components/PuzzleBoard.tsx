@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { JigsawPiece, PuzzleConfig, PuzzleBoardProps } from '../types/puzzle';
 import confetti from 'canvas-confetti';
 
 // --- CONSTANTS ---
 const TAB = 24;            
 const SNAP_DIST = 40;      
-const BOARD_MARGIN = 20;   
+const BOARD_MARGIN = 20;
 
 export const PuzzleBoard = ({ 
   imageSrc, 
@@ -19,9 +19,9 @@ export const PuzzleBoard = ({
   // Game State
   const [pieces, setPieces] = useState<JigsawPiece[]>([]);
   const [config, setConfig] = useState<PuzzleConfig | null>(null);
-  const [imgSize, setImgSize] = useState<{w: number, h: number} | null>(null);
-  
-  // Interaction State
+  const [imgDimensions, setImgDimensions] = useState<{w: number, h: number} | null>(null);
+  const [windowSize, setWindowSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+
   const [dragging, setDragging] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [loading, setLoading] = useState(true);
@@ -68,32 +68,109 @@ export const PuzzleBoard = ({
     return path;
   };
 
-  // --- 2. INITIALIZATION ---
+  // --- 2. LAYOUT CALCULATION ENGINE ---
+  const calculateMetrics = useCallback((winW: number, winH: number, imgW: number, imgH: number) => {
+    
+    // Determine Orientation based on WINDOW size
+    const isPortrait = winH > winW;
+
+    // 1. Determine "Safe Zone" for the board (Where the ghost image goes)
+    let availableW, availableH;
+    let scatterZone; // Where pieces start
+
+    if (isPortrait) {
+      // Portrait: Board at top (60%), Tray at bottom
+      availableW = winW - (BOARD_MARGIN * 2);
+      availableH = (winH * 0.60) - (BOARD_MARGIN * 2);
+      
+      // Calculate Scale to fit image in Safe Zone
+      const scale = Math.min(1, availableW / imgW, availableH / imgH);
+      const boardW = Math.floor(imgW * scale);
+      const boardH = Math.floor(imgH * scale);
+      
+      // Define Tray (Bottom area)
+      scatterZone = {
+        x: BOARD_MARGIN,
+        y: boardH + BOARD_MARGIN + 40,
+        w: winW - (BOARD_MARGIN * 2),
+        h: (winH - boardH) - 100
+      };
+
+      return { scale, boardW, boardH, scatterZone };
+
+    } else {
+      // Landscape: Board at Left (70%), Tray at Right (30%)
+      const trayW = Math.max(250, winW * 0.30); // At least 250px tray
+      
+      availableW = (winW - trayW) - (BOARD_MARGIN * 2);
+      availableH = winH - (BOARD_MARGIN * 2);
+
+      // Calculate Scale
+      const scale = Math.min(1, availableW / imgW, availableH / imgH);
+      const boardW = Math.floor(imgW * scale);
+      const boardH = Math.floor(imgH * scale);
+
+      // Define Tray (Right area)
+      scatterZone = {
+        x: boardW + BOARD_MARGIN + 40,
+        y: BOARD_MARGIN,
+        w: trayW - 60,
+        h: winH - (BOARD_MARGIN * 2)
+      };
+
+      return { scale, boardW, boardH, scatterZone };
+    }
+  }, []);
+
+
+  // --- 3. INIT & RESIZE LISTENER ---
+  
+  // Track Window Resize
   useEffect(() => {
-    setLoading(true);
+    const handleResize = () => {
+      setWindowSize({ w: window.innerWidth, h: window.innerHeight });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Load Image
+  useEffect(() => {
     const img = new Image();
     img.src = imageSrc;
     img.crossOrigin = "Anonymous";
-
     img.onload = () => {
-      setImgSize({ w: img.width, h: img.height });
+      setImgDimensions({ w: img.width, h: img.height });
+      setLoading(false);
+    };
+  }, [imageSrc]);
 
-      const isMobile = window.innerWidth < 800;
-      const trayWidth = isMobile ? 0 : 300; 
-      
-      const availableW = window.innerWidth - trayWidth - (BOARD_MARGIN * 3);
-      const availableH = isMobile ? window.innerHeight * 0.5 : window.innerHeight - (BOARD_MARGIN * 3);
+  // Recalculate Board when Window or Image changes
+  useEffect(() => {
+    if (!imgDimensions || loading) return;
 
-      const scale = Math.min(1, availableW / img.width, availableH / img.height);
-      
-      const boardW = Math.floor(img.width * scale);
-      const boardH = Math.floor(img.height * scale);
-      const pieceW = Math.floor(boardW / gridSize);
-      const pieceH = Math.floor(boardH / gridSize);
-      
-      const exactW = pieceW * gridSize;
-      const exactH = pieceH * gridSize;
+    const { w: winW, h: winH } = windowSize;
+    const { w: imgW, h: imgH } = imgDimensions;
 
+    // Run Calculation
+    const metrics = calculateMetrics(winW, winH, imgW, imgH);
+    
+    const pieceW = Math.floor(metrics.boardW / gridSize);
+    const pieceH = Math.floor(metrics.boardH / gridSize);
+    const exactW = pieceW * gridSize;
+    const exactH = pieceH * gridSize;
+    const fw = pieceW + TAB * 2;
+    const fh = pieceH + TAB * 2;
+
+    const newConfig: PuzzleConfig = {
+      rows: gridSize, cols: gridSize,
+      pieceWidth: pieceW, pieceHeight: pieceH,
+      boardWidth: exactW, boardHeight: exactH,
+      totalPieceWidth: fw, totalPieceHeight: fh
+    };
+
+    // If this is the FIRST load, generate pieces
+    if (pieces.length === 0) {
       // Shapes
       const shapes: number[][][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(0));
       for (let r = 0; r < gridSize; r++) {
@@ -107,124 +184,58 @@ export const PuzzleBoard = ({
         }
       }
 
-      const newPieces: JigsawPiece[] = [];
-      const fw = pieceW + TAB * 2;
-      const fh = pieceH + TAB * 2;
-      
-      let startX, startY, scatterW, scatterH;
-
-      if (isMobile) {
-        startX = BOARD_MARGIN;
-        startY = exactH + BOARD_MARGIN + 20; 
-        scatterW = window.innerWidth - fw - 40;
-        scatterH = 300;
-      } else {
-        startX = exactW + BOARD_MARGIN + 40;
-        startY = BOARD_MARGIN;
-        scatterW = trayWidth - fw - 20;
-        scatterH = window.innerHeight - fh - 50;
-      }
+      const generatedPieces: JigsawPiece[] = [];
+      const { scatterZone } = metrics;
       
       for (let r = 0; r < gridSize; r++) {
         for (let c = 0; c < gridSize; c++) {
-          newPieces.push({
+          generatedPieces.push({
             id: r * gridSize + c,
             correctRow: r,
             correctCol: c,
-            currentX: startX + Math.random() * scatterW,
-            currentY: startY + Math.random() * scatterH,
+            // Random scatter
+            currentX: scatterZone.x + Math.random() * Math.max(0, scatterZone.w - fw),
+            currentY: scatterZone.y + Math.random() * Math.max(0, scatterZone.h - fh),
             rotation: (Math.random() * 20) - 10,
             isPlaced: false,
             shape: shapes[r][c] as [number, number, number, number],
           });
         }
       }
+      setPieces(generatedPieces);
+    } else if (config) {
+      // If Resizing (Rotation), scale piece positions intelligently
+      const ratioX = pieceW / config.pieceWidth;
+      const ratioY = pieceH / config.pieceHeight;
 
-      setConfig({ 
-        rows: gridSize, cols: gridSize, 
-        pieceWidth: pieceW, pieceHeight: pieceH, 
-        boardWidth: exactW, boardHeight: exactH,
-        totalPieceWidth: fw, totalPieceHeight: fh
-      });
-      setPieces(newPieces);
-      setLoading(false);
-    };
-  }, [imageSrc, gridSize]);
-
-
-  // --- 3. INTELLIGENT RESIZE HANDLER ---
-  useEffect(() => {
-    const handleResize = () => {
-      if (!config || !imgSize) return;
-
-      const isMobile = window.innerWidth < 800;
-      const trayWidth = isMobile ? 0 : 300; 
-      
-      // 1. Recalculate Board Dimensions
-      const availableW = window.innerWidth - trayWidth - (BOARD_MARGIN * 3);
-      const availableH = isMobile ? window.innerHeight * 0.5 : window.innerHeight - (BOARD_MARGIN * 3);
-
-      const scale = Math.min(1, availableW / imgSize.w, availableH / imgSize.h);
-      
-      const boardW = Math.floor(imgSize.w * scale);
-      if (Math.abs(boardW - config.boardWidth) < 10) return; // Ignore tiny shifts
-
-      const pieceW = Math.floor(boardW / gridSize);
-      const pieceH = Math.floor((imgSize.h * scale) / gridSize);
-      
-      const exactW = pieceW * gridSize;
-      const exactH = pieceH * gridSize;
-      const fw = pieceW + TAB * 2;
-      const fh = pieceH + TAB * 2;
-
-      const ratio = pieceW / config.pieceWidth;
-
-      // 2. Update Pieces INTELLIGENTLY
       setPieces(prev => prev.map(p => {
         if (p.isPlaced) {
-           // FIXED: If placed, ignore old position/ratio.
-           // Recalculate exact geometric position on the new grid.
+           // If placed, snap to new correct grid slot
            return {
              ...p,
              currentX: BOARD_MARGIN + (p.correctCol * pieceW) - TAB,
              currentY: BOARD_MARGIN + (p.correctRow * pieceH) - TAB
            };
         } else {
-           // FIXED: If loose, scale roughly but CLAMP to screen.
-           // This prevents pieces from flying off when rotating Portrait -> Landscape
-           let nx = p.currentX * ratio;
-           let ny = p.currentY * ratio;
+           // If loose, scale position
+           let nx = p.currentX * ratioX;
+           let ny = p.currentY * ratioY;
            
-           // Ensure it stays visible in the new window size
-           const maxX = window.innerWidth - fw;
-           const maxY = window.innerHeight - fh;
-           
-           return {
-             ...p,
-             currentX: Math.min(Math.max(0, nx), maxX),
+           // Clamp to new window size so they don't disappear
+           const maxX = winW - fw;
+           const maxY = winH - fh;
+           return { 
+             ...p, 
+             currentX: Math.min(Math.max(0, nx), maxX), 
              currentY: Math.min(Math.max(0, ny), maxY)
            };
         }
       }));
+    }
 
-      // 3. Update Config
-      setConfig({ 
-        rows: gridSize, cols: gridSize, 
-        pieceWidth: pieceW, pieceHeight: pieceH, 
-        boardWidth: exactW, boardHeight: exactH,
-        totalPieceWidth: fw, totalPieceHeight: fh
-      });
-    };
+    setConfig(newConfig);
 
-    let timeoutId: NodeJS.Timeout;
-    const onResize = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(handleResize, 100);
-    };
-
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [config, imgSize, gridSize]);
+  }, [windowSize, imgDimensions, gridSize, loading]); // Dependencies for recalc
 
 
   // --- 4. DRAG HANDLER ---
@@ -237,6 +248,7 @@ export const PuzzleBoard = ({
     const piece = pieces.find(p => p.id === id);
     if (!piece || piece.isPlaced) return;
 
+    // Get Mouse Pos relative to Scrollable Area
     const rect = containerRef.current.getBoundingClientRect();
     const scrollLeft = containerRef.current.scrollLeft;
     const scrollTop = containerRef.current.scrollTop;
@@ -249,7 +261,6 @@ export const PuzzleBoard = ({
       y: mouseY - piece.currentY
     });
     setDragging(id);
-    
     setPieces(prev => [...prev.filter(p => p.id !== id), piece]);
   };
 
@@ -332,13 +343,12 @@ export const PuzzleBoard = ({
   }, [dragging, dragOffset, config, onComplete]);
 
 
-  if (loading || !config) return <div className="p-20 text-center font-bold text-gray-400">Loading Jigsaw...</div>;
-
-  const containerW = Math.max(window.innerWidth, config.boardWidth + 400);
-  const containerH = Math.max(window.innerHeight, config.boardHeight + 500);
+  if (loading) return <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-100 font-bold text-gray-400">Loading Jigsaw...</div>;
 
   return (
-    <div className="flex flex-col h-screen bg-stone-100 font-sans select-none overflow-hidden touch-none">
+    // FULLSCREEN OVERLAY: fixed inset-0 z-50
+    // This forces the puzzle to cover the entire screen, ignoring parent layout issues.
+    <div className="fixed inset-0 z-50 flex flex-col bg-stone-100 font-sans select-none overflow-hidden touch-none">
       
       {/* HEADER */}
       <div className="flex-none flex justify-between items-center px-6 py-3 bg-white shadow z-20">
@@ -349,113 +359,115 @@ export const PuzzleBoard = ({
       </div>
 
       {/* SCROLLABLE VIEWPORT */}
-      <div className="flex-1 overflow-auto bg-stone-100 relative">
-        <div 
-          ref={containerRef}
-          className="relative"
-          style={{ 
-            minWidth: '100%', 
-            minHeight: '100%',
-            width: containerW,
-            height: containerH,
-            touchAction: 'none'
-          }}
-        >
-          
-          {/* 1. GHOST BOARD */}
+      <div className="flex-1 overflow-auto bg-stone-100 relative w-full h-full">
+        {config && (
           <div 
-            className="absolute border-2 border-stone-200 rounded overflow-hidden"
+            ref={containerRef}
+            className="relative"
             style={{ 
-              top: BOARD_MARGIN, 
-              left: BOARD_MARGIN, 
-              width: config.boardWidth, 
-              height: config.boardHeight,
-              background: '#f5f5f4'
+              minWidth: '100%', 
+              minHeight: '100%',
+              // Ensure area handles pieces that might be dragged slightly off-board
+              width: Math.max(windowSize.w, config.boardWidth + 50),
+              height: Math.max(windowSize.h, config.boardHeight + 50),
+              touchAction: 'none'
             }}
           >
-             <img 
-               src={imageSrc} 
-               alt="" 
-               className="w-full h-full object-cover pointer-events-none"
-               style={{ opacity: 0.25 }} 
-             />
-
-             <svg width={config.boardWidth} height={config.boardHeight} className="absolute inset-0 overflow-visible pointer-events-none">
-               {pieces.map(p => (
-                 <path 
-                   key={`ghost-${p.id}`}
-                   d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)}
-                   transform={`translate(${p.correctCol * config.pieceWidth - TAB}, ${p.correctRow * config.pieceHeight - TAB})`}
-                   fill="none" 
-                   stroke="#000" 
-                   strokeWidth={gridSize > 4 ? "0.5" : "1.5"} 
-                   style={{ opacity: gridSize > 4 ? 0.1 : 0.25 }} 
-                 />
-               ))}
-             </svg>
-             
-             {!pieces.some(p => p.isPlaced) && (
-                <div className="absolute inset-0 flex items-center justify-center text-stone-400 font-bold text-2xl uppercase opacity-50 tracking-widest pointer-events-none">
-                  Place Here
-                </div>
-             )}
-          </div>
-
-          {/* 2. PIECES */}
-          {pieces.map(p => (
-            <div
-              key={p.id}
-              onPointerDown={(e) => handlePointerDown(e, p.id)}
-              className="absolute"
-              style={{
-                left: 0, top: 0,
-                width: config.totalPieceWidth,
-                height: config.totalPieceHeight,
-                transform: `translate(${p.currentX}px, ${p.currentY}px) rotate(${p.rotation}deg)`,
-                zIndex: p.isPlaced ? 1 : (dragging === p.id ? 100 : 10),
-                cursor: p.isPlaced ? 'default' : 'grab',
-                pointerEvents: p.isPlaced ? 'none' : 'auto', 
-                transition: dragging === p.id ? 'none' : 'transform 0.1s ease-out',
-                filter: p.isPlaced ? 'none' : 'drop-shadow(2px 3px 5px rgba(0,0,0,0.3))',
-                touchAction: 'none'
+            
+            {/* GHOST BOARD */}
+            <div 
+              className="absolute border-2 border-stone-200 rounded overflow-hidden"
+              style={{ 
+                top: BOARD_MARGIN, 
+                left: BOARD_MARGIN, 
+                width: config.boardWidth, 
+                height: config.boardHeight,
+                background: '#f5f5f4'
               }}
             >
-              <svg width={config.totalPieceWidth} height={config.totalPieceHeight} className="overflow-visible" style={{ pointerEvents: 'none' }}>
-                <defs>
-                  <clipPath id={`clip-${p.id}`}>
-                    <path d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)} />
-                  </clipPath>
-                  <filter id="bevel">
-                    <feGaussianBlur in="SourceAlpha" stdDeviation="1" result="blur" />
-                    <feSpecularLighting in="blur" surfaceScale="2" specularConstant="0.8" specularExponent="15" lightingColor="#white" result="specOut">
-                      <fePointLight x="-5000" y="-10000" z="20000" />
-                    </feSpecularLighting>
-                    <feComposite in="specOut" in2="SourceAlpha" operator="in" result="specOut" />
-                    <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" />
-                  </filter>
-                </defs>
-
-                <g clipPath={`url(#clip-${p.id})`}>
-                   <image 
-                     href={imageSrc} 
-                     width={config.boardWidth} 
-                     height={config.boardHeight}
-                     x={-(p.correctCol * config.pieceWidth) + TAB}
-                     y={-(p.correctRow * config.pieceHeight) + TAB}
-                   />
-                   <rect width="100%" height="100%" fill="transparent" filter="url(#bevel)" />
-                </g>
-                <path d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="0.5" />
+              {/* Force Image to Fit exactly (matches aspect ratio calculation) */}
+              <img 
+                src={imageSrc} 
+                alt="" 
+                className="w-full h-full object-cover pointer-events-none"
+                style={{ opacity: 0.25 }} 
+              />
+              <svg width={config.boardWidth} height={config.boardHeight} className="absolute inset-0 overflow-visible pointer-events-none">
+                {pieces.map(p => (
+                  <path 
+                    key={`ghost-${p.id}`}
+                    d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)}
+                    transform={`translate(${p.correctCol * config.pieceWidth - TAB}, ${p.correctRow * config.pieceHeight - TAB})`}
+                    fill="none" 
+                    stroke="#000" 
+                    strokeWidth={gridSize > 4 ? "0.5" : "1.5"} 
+                    style={{ opacity: gridSize > 4 ? 0.1 : 0.25 }} 
+                  />
+                ))}
               </svg>
+              {!pieces.some(p => p.isPlaced) && (
+                  <div className="absolute inset-0 flex items-center justify-center text-stone-400 font-bold text-2xl uppercase opacity-50 tracking-widest pointer-events-none">
+                    Place Here
+                  </div>
+              )}
             </div>
-          ))}
-          
-          {/* Reference Image */}
-          <div className="fixed bottom-4 right-4 w-40 bg-white p-1 shadow-lg rounded z-50 pointer-events-none opacity-90 border border-gray-200">
-             <img src={imageSrc} className="w-full rounded" />
-          </div>
 
-        </div>
+            {/* PIECES */}
+            {pieces.map(p => (
+              <div
+                key={p.id}
+                onPointerDown={(e) => handlePointerDown(e, p.id)}
+                className="absolute"
+                style={{
+                  left: 0, top: 0,
+                  width: config.totalPieceWidth,
+                  height: config.totalPieceHeight,
+                  transform: `translate(${p.currentX}px, ${p.currentY}px) rotate(${p.rotation}deg)`,
+                  zIndex: p.isPlaced ? 1 : (dragging === p.id ? 100 : 10),
+                  cursor: p.isPlaced ? 'default' : 'grab',
+                  pointerEvents: p.isPlaced ? 'none' : 'auto', 
+                  transition: dragging === p.id ? 'none' : 'transform 0.1s ease-out',
+                  filter: p.isPlaced ? 'none' : 'drop-shadow(2px 3px 5px rgba(0,0,0,0.3))',
+                  touchAction: 'none'
+                }}
+              >
+                <svg width={config.totalPieceWidth} height={config.totalPieceHeight} className="overflow-visible" style={{ pointerEvents: 'none' }}>
+                  <defs>
+                    <clipPath id={`clip-${p.id}`}>
+                      <path d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)} />
+                    </clipPath>
+                    <filter id="bevel">
+                      <feGaussianBlur in="SourceAlpha" stdDeviation="1" result="blur" />
+                      <feSpecularLighting in="blur" surfaceScale="2" specularConstant="0.8" specularExponent="15" lightingColor="#white" result="specOut">
+                        <fePointLight x="-5000" y="-10000" z="20000" />
+                      </feSpecularLighting>
+                      <feComposite in="specOut" in2="SourceAlpha" operator="in" result="specOut" />
+                      <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" />
+                    </filter>
+                  </defs>
+
+                  <g clipPath={`url(#clip-${p.id})`}>
+                    <image 
+                      href={imageSrc} 
+                      width={config.boardWidth} 
+                      height={config.boardHeight}
+                      x={-(p.correctCol * config.pieceWidth) + TAB}
+                      y={-(p.correctRow * config.pieceHeight) + TAB}
+                    />
+                    <rect width="100%" height="100%" fill="transparent" filter="url(#bevel)" />
+                  </g>
+                  <path d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="0.5" />
+                </svg>
+              </div>
+            ))}
+            
+            {/* Reference Image */}
+            <div className="fixed bottom-4 right-4 w-40 bg-white p-1 shadow-lg rounded z-50 pointer-events-none opacity-90 border border-gray-200">
+              <img src={imageSrc} className="w-full rounded" />
+            </div>
+
+          </div>
+        )}
       </div>
     </div>
   );
