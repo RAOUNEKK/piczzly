@@ -1,0 +1,194 @@
+/* eslint-disable */
+/* @ts-nocheck */
+/* Import the modern font 'Outfit' to match the new vibe */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Quicksand:wght@400;500;600;700&display=swap');
+/* Add Titan One and Pacifico to your imports */
+@import url('https://fonts.googleapis.com/css2?family=Titan+One&family=Pacifico&family=Outfit:wght@300;400;600;700;800&family=Quicksand:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- PICZZLY NEW PALETTE SYSTEM --- */
+:root {
+  /* THE PALETTE HEX CODES */
+  --color-purple: #7E549F;
+  --color-pink: #C1549C;
+  --color-salmon: #FB836F;
+  --color-yellow: #FFCB3E;
+  
+  /* MAPPING TO YOUR COMPONENT SYSTEM */
+  
+  /* Primary Action (Buttons) -> PINK */
+  --primary: #C1549C;
+  --primary-foreground: #ffffff;
+  --primary-dark: #a03d7e;
+
+  /* Secondary Action -> PURPLE */
+  --secondary: #7E549F;
+  --secondary-foreground: #ffffff;
+
+  /* Accents -> YELLOW */
+  --accent: #FFCB3E;
+  --accent-foreground: #7E549F;
+  
+  /* Wine/Destructive (kept for logic) -> SALMON */
+  --wine: #FB836F;
+  --wine-foreground: #ffffff;
+
+  /* UI Elements */
+  --background: #7E549F; /* Fallback */
+  --foreground: #ffffff;
+  --card: #ffffff;
+  --card-foreground: #333333;
+  --border: rgba(255, 255, 255, 0.2);
+  --ring: #FFCB3E;
+
+  /* Shadows */
+  --shadow-soft: 0 4px 20px -4px rgba(0, 0, 0, 0.2);
+  --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 20px rgba(255, 203, 62, 0.6); /* Yellow Glow */
+}
+
+/* GLOBAL STYLES */
+* {
+  border-color: var(--border);
+}
+
+html {
+  font-family: 'Outfit', 'Quicksand', sans-serif;
+}
+
+body {
+  /* THE GLOBAL GRADIENT BACKGROUND */
+  background: linear-gradient(135deg, var(--color-purple) 0%, var(--color-pink) 60%, var(--color-salmon) 100%);
+  background-attachment: fixed; /* Keeps gradient steady while scrolling */
+  color: var(--foreground);
+  min-height: 100vh;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* SELECTION HIGHLIGHT */
+::selection {
+  background: var(--color-yellow);
+  color: var(--color-purple);
+}
+
+/* CUSTOM SCROLLBAR */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-yellow);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: white;
+}
+
+@layer components {
+  /* 
+     UPDATED BUTTONS 
+     Note: Removed 'hsl()' wrappers since variables are now Hex 
+  */
+  
+  .btn-primary {
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+    border-radius: 9999px; /* Rounded full */
+    padding: 1rem 2.5rem;
+    font-weight: 700;
+    font-size: 1.125rem;
+    box-shadow: var(--shadow-soft);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: scale(1);
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-primary:hover {
+    background-color: var(--primary-dark);
+    box-shadow: var(--shadow-glow);
+    transform: translateY(-2px);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0);
+  }
+
+  .btn-secondary {
+    background-color: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    color: white;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 9999px;
+    padding: 1rem 2.5rem;
+    font-weight: 700;
+    font-size: 1.125rem;
+    transition: all 0.3s;
+    cursor: pointer;
+  }
+
+  .btn-secondary:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-color: white;
+    transform: translateY(-2px);
+  }
+
+  /* Wine button became Salmon/Exit button */
+  .btn-wine {
+    background-color: var(--primary); /* Use Pink for exit too, or use var(--wine) */
+    color: white;
+    border-radius: 9999px;
+    padding: 0.5rem 1.5rem;
+    font-weight: 700;
+    box-shadow: var(--shadow-soft);
+    transition: all 0.2s;
+  }
+  .btn-wine:hover {
+    transform: scale(1.05);
+    background-color: var(--primary-dark);
+  }
+
+  /* CARD STYLES UPDATED FOR DARK BG */
+  .card-playful {
+    background-color: rgba(239, 226, 79, 0.763);
+    border-radius: 1.5rem;
+    box-shadow: var(--shadow-card);
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.3s;
+    position: relative;
+    z-index: 10;
+    overflow: hidden;
+  }
+
+  .card-playful:hover {
+    transform: translateY(-5px);
+    border-color: var(--color-yellow);
+    box-shadow: var(--shadow-glow);
+  }
+}
+
+@layer utilities {
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+  .animate-pop {
+    animation: pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pop {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
