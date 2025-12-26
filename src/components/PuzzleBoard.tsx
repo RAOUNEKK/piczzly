@@ -15,9 +15,13 @@ export const PuzzleBoard = ({
 }: PuzzleBoardProps) => {
   
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Game State
   const [pieces, setPieces] = useState<JigsawPiece[]>([]);
   const [config, setConfig] = useState<PuzzleConfig | null>(null);
+  const [imgSize, setImgSize] = useState<{w: number, h: number} | null>(null); // New: Store original image size
   
+  // Interaction State
   const [dragging, setDragging] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [loading, setLoading] = useState(true);
@@ -64,7 +68,7 @@ export const PuzzleBoard = ({
     return path;
   };
 
-  // --- 2. INIT ---
+  // --- 2. INITIALIZATION ---
   useEffect(() => {
     setLoading(true);
     const img = new Image();
@@ -72,6 +76,9 @@ export const PuzzleBoard = ({
     img.crossOrigin = "Anonymous";
 
     img.onload = () => {
+      // Store original dimensions for resizing later
+      setImgSize({ w: img.width, h: img.height });
+
       const isMobile = window.innerWidth < 800;
       const trayWidth = isMobile ? 0 : 300; 
       
@@ -88,6 +95,7 @@ export const PuzzleBoard = ({
       const exactW = pieceW * gridSize;
       const exactH = pieceH * gridSize;
 
+      // Generate Random Shapes
       const shapes: number[][][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(0));
       for (let r = 0; r < gridSize; r++) {
         for (let c = 0; c < gridSize; c++) {
@@ -145,8 +153,66 @@ export const PuzzleBoard = ({
   }, [imageSrc, gridSize]);
 
 
-  // --- 3. DRAG HANDLER (Global for Mobile) ---
-  
+  // --- 3. AUTO-RESIZE HANDLER (ROTATION SUPPORT) ---
+  useEffect(() => {
+    const handleResize = () => {
+      if (!config || !imgSize) return;
+
+      const isMobile = window.innerWidth < 800;
+      const trayWidth = isMobile ? 0 : 300; 
+      
+      // Re-calculate available space
+      const availableW = window.innerWidth - trayWidth - (BOARD_MARGIN * 3);
+      const availableH = isMobile ? window.innerHeight * 0.5 : window.innerHeight - (BOARD_MARGIN * 3);
+
+      const scale = Math.min(1, availableW / imgSize.w, availableH / imgSize.h);
+      
+      // Calculate NEW dimensions
+      const boardW = Math.floor(imgSize.w * scale);
+      
+      // Optimization: Only update if size changed significantly (>10px) to avoid jitter
+      if (Math.abs(boardW - config.boardWidth) < 10) return;
+
+      const pieceW = Math.floor(boardW / gridSize);
+      const pieceH = Math.floor((imgSize.h * scale) / gridSize);
+      
+      const exactW = pieceW * gridSize;
+      const exactH = pieceH * gridSize;
+      const fw = pieceW + TAB * 2;
+      const fh = pieceH + TAB * 2;
+
+      // Calculate the Scaling Ratio (New Size / Old Size)
+      const ratio = pieceW / config.pieceWidth;
+
+      // Update Config
+      setConfig({ 
+        rows: gridSize, cols: gridSize, 
+        pieceWidth: pieceW, pieceHeight: pieceH, 
+        boardWidth: exactW, boardHeight: exactH,
+        totalPieceWidth: fw, totalPieceHeight: fh
+      });
+
+      // Update Piece Positions (Scale them so they stay in relative place)
+      setPieces(prev => prev.map(p => ({
+        ...p,
+        currentX: p.currentX * ratio,
+        currentY: p.currentY * ratio
+      })));
+    };
+
+    // Debounce the resize event (wait 200ms after rotation finishes)
+    let timeoutId: NodeJS.Timeout;
+    const onResize = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(handleResize, 200);
+    };
+
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [config, imgSize, gridSize]);
+
+
+  // --- 4. DRAG HANDLER ---
   const handlePointerDown = (e: React.PointerEvent, id: number) => {
     e.preventDefault();
     e.stopPropagation();
@@ -212,7 +278,6 @@ export const PuzzleBoard = ({
           
           const dist = Math.hypot(p.currentX - targetX, p.currentY - targetY);
 
-          // MAGNETIC SNAPPING LOGIC IS HERE
           if (dist < SNAP_DIST) {
             didSnap = true;
             snapPos = { x: targetX, y: targetY };
@@ -282,12 +347,7 @@ export const PuzzleBoard = ({
           }}
         >
           
-          {/* 
-             1. GHOST BOARD (UPDATED)
-             - Includes Faint Watermark Image.
-             - Includes Magnetic Grid Lines, but styles them 
-               faintly (Thin & Low Opacity) on high levels so it's not "messy".
-          */}
+          {/* 1. GHOST BOARD (Adaptive) */}
           <div 
             className="absolute border-2 border-stone-200 rounded overflow-hidden"
             style={{ 
@@ -298,7 +358,6 @@ export const PuzzleBoard = ({
               background: '#f5f5f4'
             }}
           >
-             {/* Watermark Image */}
              <img 
                src={imageSrc} 
                alt="" 
@@ -306,7 +365,7 @@ export const PuzzleBoard = ({
                style={{ opacity: 0.25 }} 
              />
 
-             {/* Grid Lines */}
+             {/* Faint Grid Lines */}
              <svg width={config.boardWidth} height={config.boardHeight} className="absolute inset-0 overflow-visible pointer-events-none">
                {pieces.map(p => (
                  <path 
@@ -314,9 +373,6 @@ export const PuzzleBoard = ({
                    d={getPiecePath(config.pieceWidth, config.pieceHeight, p.shape)}
                    transform={`translate(${p.correctCol * config.pieceWidth - TAB}, ${p.correctRow * config.pieceHeight - TAB})`}
                    fill="none" 
-                   // ADAPTIVE STYLING:
-                   // If Easy (<=4): Standard Black Lines (visible)
-                   // If Expert (>4): Very Thin, Faint Lines (clean but visible)
                    stroke="#000" 
                    strokeWidth={gridSize > 4 ? "0.5" : "1.5"} 
                    style={{ opacity: gridSize > 4 ? 0.1 : 0.25 }} 
