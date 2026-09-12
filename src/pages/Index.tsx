@@ -80,6 +80,9 @@ const Index = () => {
           Turn pictures into playful puzzles and enjoy the <br/>
           calm fun of assembling them piece by piece
         </p>
+        <p className="text-sm text-white/80 font-medium mt-1 drop-shadow-sm">
+          Made by Raounek.hrz
+        </p>
       </div>
 
       {/* 2. ACTION CARDS */}

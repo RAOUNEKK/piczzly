@@ -14,7 +14,7 @@ const Home = () => {
             <PuzzleLogo size="lg" />
           </div>
           <p className="text-xl text-muted-foreground font-medium max-w-md mx-auto">
-            Turn pictures into playful puzzles and enjoy the calm fun of assembling them piece by piece
+             Made by Roounek.hrz
           </p>
         </div>
 
